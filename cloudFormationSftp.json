@@ -1,0 +1,290 @@
+{
+  "Parameters": {
+    "S3BucketName": {
+      "Type": "String",
+      "Default": "BucketLocation"
+    },
+    "VpcCidrBlock": {
+      "Type": "String",
+      "Default": "xx.xx.xx.xx/16"
+    },
+    "SubnetCidrBlock": {
+      "Type": "String",
+      "Default": "xx.xx.xx.y/16"
+    },
+    "AvailabilityZone": {
+      "Type": "String",
+      "Default": "AvailabilityZone"
+    },
+    "PublicSshKey": {
+      "Type": "String",
+      "Default": "PublicSshKeyUser"
+    },
+    "SftpUser": {
+      "Type": "String",
+      "Default": "SftpUser"
+    },
+    "IpSftpUser": {
+      "Type": "String",
+      "Default": "IpSftpUser"
+    },
+    "SftepServerEntryFiles": {
+      "Type": "String",
+      "Default": "SftepServerEntryFiles"
+    },
+    "SftepServerTargetFiles": {
+      "Type": "String",
+      "Default": "SftepServerTargetFiles"
+    }
+  },
+  "SftpVpc": {
+    "Type": "AWS::EC2::VPC",
+    "Properties": {
+      "CidrBlock": {
+        "Ref": "VpcCidrBlock"
+      },
+      "EnableDnsHostnames": true
+    }
+  },
+  "SftpVpcIg": {
+    "Type": "AWS::EC2::InternetGateway",
+    "Properties": {}
+  },
+  "SftpVpcIgAttachment": {
+    "Type": "AWS::EC2::VPCGatewayAttachment",
+    "Properties": {
+      "InternetGatewayId": {
+        "Ref": "SftpVpcIg"
+      },
+      "VpcId": {
+        "Ref": "SftpVpc"
+      }
+    },
+    "DependsOn": [
+      "SftpVpc",
+      "SftpVpcIg"
+    ]
+  },
+  "SftpVpcSubnet": {
+    "Type": "AWS::EC2::Subnet",
+    "Properties": {
+      "AvailabilityZone": {
+        "Ref": "AvailabilityZone"
+      },
+      "CidrBlock": {
+        "Ref": "SubnetCidrBlock"
+      },
+      "MapPublicIpOnLaunch": true,
+      "VpcId": {
+        "Ref": "SftpVpc"
+      }
+    },
+    "DependsOn": [
+      "SftpVpc"
+    ]
+  },
+  "SftpVpcSubnetRouteTable": {
+    "Type": "AWS::EC2::RouteTable",
+    "Properties": {
+      "VpcId": {
+        "Ref": "SftpVpc"
+      }
+    }
+  },
+  "SftppublicSubnetRouteTableAssociation": {
+    "Type": "AWS::EC2::SubnetRouteTableAssociation",
+    "Properties": {
+      "RouteTableId": {
+        "Ref": "SftpVpcSubnetRouteTable"
+      },
+      "SubnetId": {
+        "Ref": "SftpVpcSubnet"
+      }
+    }
+  },
+  "SftpVpcSubnetRoute": {
+    "Type": "AWS::EC2::Route",
+    "Properties": {
+      "DestinationCidrBlock": "0.0.0.0/0",
+      "GatewayId": {
+        "Ref": "SftpVpcIg"
+      },
+      "RouteTableId": {
+        "Ref": "SftpVpcSubnetRouteTable"
+      }
+    },
+    "DependsOn": [
+      "SftpVpcIgAttachment"
+    ]
+  },
+  "ElasticSftpIp": {
+    "Type": "AWS::EC2::EIP",
+    "Properties": {}
+  },
+  "SftpUserSecurityGroup": {
+    "Type": "AWS::EC2::SecurityGroup",
+    "Properties": {
+      "GroupDescription": "IPs allowed to the SFTP server",
+      "SecurityGroupIngress": [
+        {
+          "CidrIp": {
+            "Ref": "IpSftpUser"
+          },
+          "FromPort": 22,
+          "IpProtocol": "tcp",
+          "ToPort": 22
+        }
+      ],
+      "VpcId": {
+        "Ref": "SftpVpc"
+      }
+    },
+    "DependsOn": [
+      "SftpVpc"
+    ]
+  },
+  "SftpTransferRole": {
+    "Type": "AWS::IAM::Role",
+    "Properties": {
+      "AssumeRolePolicyDocument": {
+        "Statement": [
+          {
+            "Principal": {
+              "Service": [
+                "transfer.amazonaws.com"
+              ]
+            },
+            "Action": [
+              "sts:AssumeRole"
+            ],
+            "Effect": "Allow"
+          }
+        ],
+        "Version": "2012-10-17"
+      },
+      "Policies": [
+        {
+          "PolicyName": "S3SFTPAccess",
+          "PolicyDocument": {
+            "Version": "2012-10-17",
+            "Statement": [
+              {
+                "Action": [
+                  "s3:GetObject",
+                  "s3:GetObjectVersion",
+                  "s3:ListBucket",
+                  "s3:GetBucketLocation"
+                ],
+                "Resource": [
+                  {
+                    "Fn::Sub": [
+                      "arn:aws:s3:::${s3BucketName}",
+                      {
+                        "s3BucketName": {
+                          "Ref": "S3BucketName"
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "Fn::Sub": [
+                      "${S3Bucket}/${key}",
+                      {
+                        "S3Bucket": {
+                          "Fn::Sub": [
+                            "arn:aws:s3:::${s3BucketName}",
+                            {
+                              "s3BucketName": {
+                                "Ref": "S3BucketName"
+                              }
+                            }
+                          ]
+                        },
+                        "key": "S3Folder"
+                      }
+                    ]
+                  }
+                ],
+                "Effect": "Allow"
+              }
+            ]
+          }
+        }
+      ],
+      "Path": "/"
+    }
+  },
+  "DatpSftpServer": {
+    "Type": "AWS::Transfer::Server",
+    "Properties": {
+      "EndpointDetails": {
+        "AddressAllocationIds": [
+          {
+            "Fn::GetAtt": [
+              "ElasticSftpIp",
+              "AllocationId"
+            ]
+          }
+        ],
+        "SecurityGroupIds": [
+          {
+            "Ref": "SftpUserSecurityGroup"
+          }
+        ],
+        "SubnetIds": [
+          {
+            "Ref": "SftpVpcSubnet"
+          }
+        ],
+        "VpcId": {
+          "Ref": "SftpVpc"
+        }
+      },
+      "EndpointType": "VPC",
+      "IdentityProviderType": "SERVICE_MANAGED",
+      "Protocols": [
+        "SFTP"
+      ],
+      "SecurityPolicyName": "TransferSecurityPolicy-2020-06"
+    }
+  },
+  "SftpUser": {
+    "Type": "AWS::Transfer::User",
+    "Properties": {
+      "HomeDirectoryMappings": [
+        {
+          "Entry": {
+            "Ref": "SftepServerEntryFiles"
+          },
+          "Target": {
+            "Ref": "SftepServerTargetFiles"
+          }
+        }
+      ],
+      "HomeDirectoryType": "LOGICAL",
+      "Role": {
+        "Fn::GetAtt": [
+          "SftpTransferRole",
+          "Arn"
+        ]
+      },
+      "ServerId": {
+        "Fn::GetAtt": [
+          "DatpSftpServer",
+          "ServerId"
+        ]
+      },
+      "SshPublicKeys": [
+        {
+          "Ref": "PublicSshKey"
+        }
+      ],
+      "UserName": {
+        "Ref": "SftpUser"
+      }
+    },
+    "DependsOn": [
+      "SftpTransferRole"
+    ]
+  }
+}
